@@ -89,6 +89,7 @@ func uploadAlbum(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusCreated)
 	fmt.Fprintln(w, "Album uploaded successfully")
+	log.Printf("📌 POST request processed in %v ms\n")
 }
 
 // Handle GET request to retrieve album by ID
@@ -107,6 +108,7 @@ func getAlbum(w http.ResponseWriter, r *http.Request) {
 	// Send JSON response
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(album)
+	log.Printf("📌 GET request processed in %v ms\n")
 }
 
 func main() {
