@@ -25,7 +25,7 @@ type Album struct {
 func initDB() {
 	var err error
 	// Modify with your RDS MySQL database connection information
-	DB_DSN := "mydbuser:gjl990110@tcp(demo-mysql.coje1ucxmgno.us-west-2.rds.amazonaws.com:3306)/demo-mysql"
+	DB_DSN := "mydbuser:gjl990110@tcp(demo-mysql.coje1ucxmgno.us-west-2.rds.amazonaws.com:3306)/mydemodb"
 	db, err = sql.Open("mysql", DB_DSN)
 	if err != nil {
 		log.Fatal(err)
