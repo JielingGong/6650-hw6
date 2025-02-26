@@ -2,79 +2,121 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
+	"fmt"
+	"io"
 	"log"
-	"os"
+	"net/http"
 
-	"github.com/gin-gonic/gin"
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/gorilla/mux"
 )
 
-// We'll store a global *sql.DB for simplicity in a demo.
 var db *sql.DB
 
-func main() {
-	// Read MySQL DSN from environment variable, e.g.:
-	// DB_DSN = "user:pass@tcp(mydb.xxxx.us-west-2.rds.amazonaws.com:3306)/mydemodb"
-	dsn := os.Getenv("DB_DSN")
-	if dsn == "" {
-		log.Fatal("DB_DSN environment variable not set")
-	}
+type Album struct {
+	ID     int    `json:"id"`
+	Title  string `json:"title"`
+	Year   int    `json:"year"`
+	Artist string `json:"artist"`
+	Image  []byte `json:"image,omitempty"`
+}
 
+func initDB() {
 	var err error
-	db, err = sql.Open("mysql", dsn)
+	// Modify with your RDS MySQL database connection information
+	DB_DSN := "demo-mysql:Gjl18986960678@tcp(demo-mysql.coje1ucxmgno.us-west-2.rds.amazonaws.com:3306)/album_store"
+	db, err = sql.Open("mysql", DB_DSN)
 	if err != nil {
-		log.Fatalf("Failed to open DB: %v", err)
+		log.Fatal(err)
 	}
 
-	// Test the DB connection quickly
-	err = db.Ping()
-	if err != nil {
-		log.Fatalf("Failed to connect to DB: %v", err)
+	if err := db.Ping(); err != nil {
+		log.Fatal(err)
 	}
+	fmt.Println("Connected to MySQL!")
 
-	db.Exec(`
-	CREATE TABLE IF NOT EXISTS test_table (
+	// Create the albums table if it doesn't exist
+	createTable()
+}
+
+func createTable() {
+	query := `CREATE TABLE IF NOT EXISTS albums (
 		id INT AUTO_INCREMENT PRIMARY KEY,
-		some_value INT
-	) ENGINE=InnoDB;
-	`)
+		title VARCHAR(255) NOT NULL,
+		year INT NOT NULL,
+		artist VARCHAR(255) NOT NULL,
+		image LONGBLOB
+	);`
 
-	// Setup Gin engine
-	r := gin.Default()
+	_, err := db.Exec(query)
+	if err != nil {
+		log.Fatalf("Failed to create albums table: %v", err)
+	} else {
+		fmt.Println("Albums table created or already exists.")
+	}
+}
 
-	// Health check route
-	r.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "ok"})
-	})
+// Handle POST request to save album
+func uploadAlbum(w http.ResponseWriter, r *http.Request) {
+	r.ParseMultipartForm(10 << 20) // Limit upload size
 
-	// GET /count -> returns row count in "test_table"
-	r.GET("/count", func(c *gin.Context) {
-		var cnt int
-		row := db.QueryRow("SELECT COUNT(*) FROM test_table")
-		if err := row.Scan(&cnt); err != nil {
-			c.JSON(500, gin.H{"error": err.Error()})
-			return
-		}
-		c.JSON(200, gin.H{"row_count": cnt})
-	})
+	file, _, err := r.FormFile("image")
+	if err != nil {
+		http.Error(w, "Invalid image upload", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
 
-	// POST /insert -> inserts a row with some random value
-	r.POST("/insert", func(c *gin.Context) {
-		res, err := db.Exec("INSERT INTO test_table (some_value) VALUES (FLOOR(RAND()*1000))")
-		if err != nil {
-			c.JSON(500, gin.H{"error": err.Error()})
-			return
-		}
-		id, _ := res.LastInsertId()
-		c.JSON(200, gin.H{"message": "inserted", "row_id": id})
-	})
-
-	// Optionally, pass a port via environment variable or default to 8080
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
+	// Read image data
+	imageData, err := io.ReadAll(file)
+	if err != nil {
+		http.Error(w, "Failed to read image", http.StatusInternalServerError)
+		return
 	}
 
-	log.Printf("Server starting on port %s ...", port)
-	r.Run(":" + port)
+	// Read JSON data
+	title := r.FormValue("title")
+	year := r.FormValue("year")
+	artist := r.FormValue("artist")
+
+	// Store in DB
+	_, err = db.Exec("INSERT INTO albums (title, year, artist, image) VALUES (?, ?, ?, ?)", title, year, artist, imageData)
+	if err != nil {
+		http.Error(w, "Failed to insert album", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusCreated)
+	fmt.Fprintln(w, "Album uploaded successfully")
+}
+
+// Handle GET request to retrieve album by ID
+func getAlbum(w http.ResponseWriter, r *http.Request) {
+	params := mux.Vars(r)
+	id := params["id"]
+
+	row := db.QueryRow("SELECT id, title, year, artist, image FROM albums WHERE id = ?", id)
+	var album Album
+	err := row.Scan(&album.ID, &album.Title, &album.Year, &album.Artist, &album.Image)
+	if err != nil {
+		http.Error(w, "Album not found", http.StatusNotFound)
+		return
+	}
+
+	// Send JSON response
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(album)
+}
+
+func main() {
+	initDB()
+	defer db.Close() // Ensure database connection is closed at the end
+
+	router := mux.NewRouter()
+	router.HandleFunc("/album", uploadAlbum).Methods("POST")
+	router.HandleFunc("/album/{id}", getAlbum).Methods("GET")
+
+	fmt.Println("Server is running on port 8080...")
+	log.Fatal(http.ListenAndServe(":8080", router))
 }
